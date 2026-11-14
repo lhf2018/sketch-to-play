@@ -1,0 +1,6 @@
+{
+  "name": "@sketch/core",
+  "private": true,
+  "type": "module",
+  "exports": "./src/index.ts"
+}

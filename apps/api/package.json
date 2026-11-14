@@ -1,0 +1,10 @@
+{
+  "name": "@sketch/api",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "build": "tsc --noEmit -p ../../tsconfig.json",
+    "start": "tsx src/server.ts"
+  }
+}
