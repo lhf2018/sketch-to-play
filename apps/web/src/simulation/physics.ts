@@ -11,7 +11,10 @@ export class Simulation {
   won = false;
   springFired = new Map<string, number>();
   time = 0;
-  private pairs = new Map<string, { inside: boolean; last: number }>();
+  private pairs = new Map<
+    string,
+    { inside: boolean; last: number; launches: number }
+  >();
   private targetTimes = new Map<number, number>();
   async create(scene: Scene) {
     ready ??= import("@dimforge/rapier2d-compat").then(async (module) => {
@@ -110,8 +113,12 @@ export class Simulation {
       }
       for (const spring of scene.objects) {
         if (spring.kind !== "spring") continue;
-        const key = spring.id + o.id,
-          state = this.pairs.get(key) ?? { inside: false, last: -Infinity };
+        const key = JSON.stringify([spring.id, o.id]),
+          state = this.pairs.get(key) ?? {
+            inside: false,
+            last: -Infinity,
+            launches: 0,
+          };
         const [sx, sy] = spring.transform.position,
           r = o.shape.radius;
         const top = sy + 0.38;
@@ -125,26 +132,31 @@ export class Simulation {
           Math.abs(p.x - sx) <= 0.2 &&
           p.y - r <= top + 0.025 &&
           p.y - r >= top - 0.03;
+        // Each spring/ball pair loses 30% of its launch impulse per return.
+        // A new ball starts at full strength; reset rebuilds this runtime state.
+        const impulse = spring.behavior.impulse * 0.7 ** state.launches;
         if (
           !state.inside &&
           fromAbove &&
           hitTop &&
-          this.time - state.last >= 0.3
+          this.time - state.last >= 0.3 &&
+          impulse / o.physics.mass >= 0.6
         ) {
           const [dx, dy] = spring.behavior.direction;
           // The plate may be reached before the contact solver cancels the fall.
-          // Remove incoming motion into the horizontal top plate so it cannot
-          // consume the spring impulse (especially after a high drop).
+          // Resolve vertical contact before launching. Do not stack the plate's
+          // ordinary restitution on top of the decaying spring impulse.
           const velocity = b.linvel();
-          b.setLinvel({ x: velocity.x, y: Math.max(0, velocity.y) }, true);
+          b.setLinvel({ x: velocity.x, y: 0 }, true);
           b.applyImpulse(
             {
-              x: dx * spring.behavior.impulse,
-              y: dy * spring.behavior.impulse,
+              x: dx * impulse,
+              y: dy * impulse,
             },
             true,
           );
           state.last = this.time;
+          state.launches++;
           state.inside = true;
           this.springFired.set(spring.id, this.time);
         }

@@ -334,7 +334,7 @@ test("a conflicting tab cannot overwrite a newer saved design", async ({
   await expect(second.getByText("保存失败", { exact: false })).toBeVisible();
 });
 
-test("spring visibly launches a falling ball and keeps bouncing", async ({
+test("spring visibly launches, decays and settles instead of bouncing forever", async ({
   page,
 }) => {
   await page.goto("/");
@@ -385,5 +385,40 @@ test("spring visibly launches a falling ball and keeps bouncing", async ({
       ),
     )
     .toBeGreaterThan(first);
+  await expect
+    .poll(
+      () =>
+        page.evaluate(
+          () => (window as any).__SKETCH_DEV__.runtime.current.time,
+        ),
+      { timeout: 8000 },
+    )
+    .toBeGreaterThan(5);
+  const settled = await page.evaluate(() => {
+    const { runtime, store } = (window as any).__SKETCH_DEV__;
+    const id = store.get().project.scene.objects[0].id;
+    return {
+      last: [...runtime.current.springFired.values()][0],
+      y: runtime.current.poses.get(id).position[1],
+      vy: runtime.current.bodies.get(id).linvel().y,
+    };
+  });
+  expect(settled.y).toBeCloseTo(1.58, 1);
+  expect(Math.abs(settled.vy)).toBeLessThan(0.05);
+  await expect
+    .poll(() =>
+      page.evaluate(() => (window as any).__SKETCH_DEV__.runtime.current.time),
+    )
+    .toBeGreaterThan(6);
+  expect(
+    await page.evaluate(
+      () =>
+        [
+          ...(
+            window as any
+          ).__SKETCH_DEV__.runtime.current.springFired.values(),
+        ][0],
+    ),
+  ).toBe(settled.last);
   await page.getByRole("button", { name: "↺ 重置" }).click();
 });
