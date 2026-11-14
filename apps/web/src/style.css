@@ -1456,3 +1456,77 @@ footer {
   font-size: 12px;
   box-shadow: 0 3px 12px #0078d430;
 }
+
+.challenge-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  background: #edf0ff;
+  border: 1px solid #cdd3f3;
+  border-radius: 14px;
+  padding: 16px 20px;
+  margin-bottom: 16px;
+  color: #435286;
+}
+.challenge-banner p {
+  margin: 6px 0;
+  font-size: 13px;
+}
+.challenge-banner small {
+  color: #64718d;
+}
+.challenge-banner button,
+.play-actions > button {
+  padding: 7px 10px;
+  border-radius: 8px;
+  background: #eef0f8;
+  color: #455379;
+}
+.challenge-banner > div:last-child {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.speed-control {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.speed-control select {
+  border: 1px solid #d5d9e9;
+  border-radius: 6px;
+  padding: 5px;
+  background: white;
+}
+.play-actions {
+  flex-wrap: wrap;
+}
+.component.block {
+  background: #faf1e3;
+  color: #996c37;
+}
+.component.seesaw {
+  background: #e7f3f5;
+  color: #468593;
+}
+
+.simulation-bar {
+  height: auto;
+  min-height: 69px;
+  padding: 12px 16px;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.simulation-bar .play-button {
+  background: #5b6edb;
+  color: white;
+}
+@media (max-width: 1400px) {
+  .simulation-bar .object-count {
+    display: none;
+  }
+}

@@ -1,5 +1,7 @@
 # sketch-to-play · 产品需求文档
 
+> 本文保留原始需求与验收目标；当前能力见 [README](README.md) 和 [实施状态](docs/IMPLEMENTATION_STATUS.md)，挑战、运动观察与机关扩展见 [规划与交付记录](docs/ROADMAP.md)。原始首版范围不等同于当前功能清单。
+
 > **画几笔，让想法动起来。**  
 > 面向桌面浏览器的二维物理创作玩具
 

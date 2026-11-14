@@ -11,6 +11,8 @@ export class Simulation {
   won = false;
   springFired = new Map<string, number>();
   time = 0;
+  trajectories = new Map<string, Vec[]>();
+  private ticks = 0;
   private pairs = new Map<
     string,
     { inside: boolean; last: number; launches: number }
@@ -37,7 +39,7 @@ export class Simulation {
       );
     for (const o of scene.objects) {
       const body = this.world.createRigidBody(
-        (o.kind === "ball"
+        (o.physics.bodyType === "dynamic"
           ? RAPIER.RigidBodyDesc.dynamic().setCcdEnabled(true)
           : RAPIER.RigidBodyDesc.fixed()
         )
@@ -74,11 +76,14 @@ export class Simulation {
           );
         } else
           desc = RAPIER.ColliderDesc.cuboid(...g.half)
+            .setRotation(g.angle - o.transform.rotation)
             .setTranslation(
               g.center[0] - o.transform.position[0],
               g.center[1] - o.transform.position[1],
             )
             .setSensor(!!g.sensor);
+        if (o.kind === "block" || o.kind === "seesaw")
+          desc.setDensity(o.physics.mass / (o.shape.width * o.shape.height));
         desc
           .setFriction(o.physics.friction)
           .setRestitution(o.physics.restitution)
@@ -86,6 +91,35 @@ export class Simulation {
           .setRestitutionCombineRule(RAPIER.CoefficientCombineRule.Average);
         this.world.createCollider(desc, body);
       }
+    }
+    const hinges = [
+      ...scene.constraints,
+      ...scene.objects
+        .filter((o) => o.kind === "seesaw")
+        .map((o) => ({ bodyId: o.id, anchor: o.transform.position })),
+    ];
+    for (const hinge of hinges) {
+      const body = this.bodies.get(hinge.bodyId)!;
+      const fixed = this.world.createRigidBody(
+        RAPIER.RigidBodyDesc.fixed().setTranslation(...hinge.anchor),
+      );
+      const p = body.translation(),
+        a = -body.rotation();
+      const dx = hinge.anchor[0] - p.x,
+        dy = hinge.anchor[1] - p.y;
+      const joint = this.world.createImpulseJoint(
+        RAPIER.JointData.revolute(
+          { x: 0, y: 0 },
+          {
+            x: dx * Math.cos(a) - dy * Math.sin(a),
+            y: dx * Math.sin(a) + dy * Math.cos(a),
+          },
+        ),
+        fixed,
+        body,
+        true,
+      );
+      joint.setContactsEnabled(false);
     }
     this.read();
   }
@@ -99,7 +133,7 @@ export class Simulation {
     this.world.step();
     this.time += 1 / 120;
     for (const o of scene.objects) {
-      if (o.kind !== "ball" || this.escaped.has(o.id)) continue;
+      if (o.physics.bodyType !== "dynamic" || this.escaped.has(o.id)) continue;
       const b = this.bodies.get(o.id)!;
       const p = b.translation(),
         v = b.linvel();
@@ -111,7 +145,7 @@ export class Simulation {
         this.bodies.delete(o.id);
         continue;
       }
-      for (const spring of scene.objects) {
+      for (const spring of o.kind === "ball" ? scene.objects : []) {
         if (spring.kind !== "spring") continue;
         const key = JSON.stringify([spring.id, o.id]),
           state = this.pairs.get(key) ?? {
@@ -120,7 +154,7 @@ export class Simulation {
             launches: 0,
           };
         const [sx, sy] = spring.transform.position,
-          r = o.shape.radius;
+          r = o.kind === "ball" ? o.shape.radius : 0;
         const top = sy + 0.38;
         const inside =
           Math.abs(p.x - sx) <= 0.2 + r &&
@@ -195,6 +229,14 @@ export class Simulation {
       if (ticks >= 60) this.won = true;
     });
     this.read();
+    if (++this.ticks % 4 === 0)
+      for (const o of scene.objects) {
+        if (o.kind !== "ball" || this.escaped.has(o.id)) continue;
+        const points = this.trajectories.get(o.id) ?? [];
+        points.push([...this.poses.get(o.id)!.position]);
+        if (points.length > 1800) points.shift();
+        this.trajectories.set(o.id, points);
+      }
   }
   private read() {
     for (const [id, b] of this.bodies) {
@@ -208,5 +250,6 @@ export class Simulation {
     this.poses.clear();
     this.pairs.clear();
     this.targetTimes.clear();
+    this.trajectories.clear();
   }
 }

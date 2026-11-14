@@ -1,6 +1,7 @@
 import { useEffect, useRef, useSyncExternalStore } from "react";
 import {
   clone,
+  worldPoint,
   bounds,
   physicalStroke,
   selectionRectangle,
@@ -20,14 +21,115 @@ import { Simulation } from "../simulation/physics";
 export const runtime: { current?: Simulation; generation: number } = {
   generation: 0,
 };
+export const prediction: {
+  points: Map<string, Vec[]>;
+  project?: object;
+  busy: boolean;
+  epoch: number;
+} = { points: new Map(), busy: false, epoch: 0 };
+export async function previewTrajectory() {
+  if (prediction.busy) {
+    prediction.epoch++;
+    prediction.busy = false;
+    store.set({ predicting: false, message: "已取消轨迹预测" });
+    return;
+  }
+  const project = store.get().project;
+  if (store.get().mode !== "editing") return;
+  if (validate(project.scene).some((i) => i.severity !== "warning")) {
+    store.set({ message: "请先修正场景，再预览轨迹" });
+    return;
+  }
+  const epoch = ++prediction.epoch;
+  prediction.busy = true;
+  prediction.points = new Map();
+  store.set({
+    predicting: true,
+    showTrails: true,
+    message: "正在预测未来 8 秒的轨迹…",
+  });
+  const sim = new Simulation();
+  try {
+    await sim.create(project.scene);
+    for (let i = 0; i < 960; i++) {
+      if (
+        epoch !== prediction.epoch ||
+        store.get().project !== project ||
+        store.get().mode !== "editing"
+      )
+        return;
+      sim.step(project.scene);
+      if (i % 120 === 119)
+        await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    prediction.points = new Map(
+      [...sim.trajectories].map(([id, points]) => [id, [...points]]),
+    );
+    prediction.project = project;
+    store.set({ message: "虚线为未来 8 秒预测；实线为本轮实际轨迹" });
+  } catch (e) {
+    store.set({ message: `轨迹预测失败：${(e as Error).message}` });
+  } finally {
+    sim.destroy();
+    if (epoch === prediction.epoch) {
+      prediction.busy = false;
+      store.set({ predicting: false });
+    }
+  }
+}
+export function singleStep() {
+  const s = store.get();
+  if (
+    s.mode !== "paused" ||
+    s.challengeWon ||
+    s.challengeFailed ||
+    !runtime.current
+  )
+    return;
+  try {
+    runtime.current.step(s.project.scene);
+    checkRun();
+  } catch (e) {
+    store.set({ message: (e as Error).message });
+  }
+}
+function checkRun() {
+  const sim = runtime.current,
+    s = store.get();
+  if (!sim || s.challenge === undefined) return;
+  if (sim.won) store.completeChallenge();
+  else if (sim.escaped.size || sim.time >= 30)
+    store.set({
+      mode: "paused",
+      challengeFailed: true,
+      message: "本次未完成，点击重置保留补画并再试一次",
+    });
+}
 export function resetSimulation() {
+  prediction.epoch++;
+  prediction.busy = false;
+  store.set({ predicting: false });
+  prediction.points.clear();
   runtime.generation++;
   runtime.current?.destroy();
   runtime.current = undefined;
-  store.set({ mode: "editing", message: "已恢复设计稿的初始状态" });
+  store.set({
+    mode: "editing",
+    challengeWon: false,
+    challengeFailed: false,
+    message: "已恢复设计稿的初始状态",
+  });
 }
 export async function play() {
   const { mode, project } = store.get();
+  prediction.epoch++;
+  prediction.busy = false;
+  store.set({ predicting: false });
+  if (
+    mode === "paused" &&
+    (store.get().challengeWon || store.get().challengeFailed)
+  )
+    return;
   if (mode === "paused") {
     store.set({ mode: "running" });
     return;
@@ -72,6 +174,8 @@ const colors = {
   track: "#556f66",
   cup: "#b4a1ce",
   spring: "#dd8069",
+  block: "#bc8c57",
+  seesaw: "#649eac",
 };
 export function Canvas() {
   const state = useSyncExternalStore(store.subscribe, store.get);
@@ -85,6 +189,7 @@ export function Canvas() {
         start: Vec;
         original?: SceneObject;
         handle?: number;
+        rotate?: boolean;
         drag?: SceneObject;
         erased?: string[];
         group?: SceneObject[];
@@ -127,17 +232,23 @@ export function Canvas() {
         last = now;
       }
       if (s.mode === "running" && sim) {
-        acc += Math.min((now - last) / 1000, 8 / 120);
+        acc += Math.min((now - last) / 1000, 8 / 120) * s.speed;
         let steps = 0;
         try {
           while (acc >= 1 / 120 && steps++ < 8) {
             sim.step(s.project.scene);
             acc -= 1 / 120;
+            checkRun();
+            if (store.get().mode !== "running") break;
           }
+          checkRun();
           if (sim.won && !announced) {
             announced = true;
             store.set({
-              message: "成功啦！小球落进了杯子。重置后试试另一种解法。",
+              message:
+                s.challenge !== undefined
+                  ? "挑战成功！可以进入下一关。"
+                  : "成功啦！小球落进了杯子。重置后试试另一种解法。",
             });
           } else if (sim.escaped.size && !announced) {
             store.set({
@@ -193,7 +304,9 @@ export function Canvas() {
     const p = position(e);
     if (p[0] < 0 || p[0] > 12 || p[1] < 0 || p[1] > 8) return;
     e.currentTarget.setPointerCapture(e.pointerId);
-    if (["ball", "track", "cup", "spring"].includes(state.tool)) {
+    if (
+      ["ball", "track", "cup", "spring", "block", "seesaw"].includes(state.tool)
+    ) {
       const o = makeObject(state.tool as "ball", p);
       store.change((d) => d.scene.objects.push(o), "已放置组件");
       store.set({
@@ -202,6 +315,11 @@ export function Canvas() {
       });
       return;
     }
+    if (
+      state.challenge !== undefined &&
+      !["select", "draw", "erase", "lasso"].includes(state.tool)
+    )
+      return;
     if (state.tool === "erase") {
       interaction.current = {
         points: [p],
@@ -214,7 +332,30 @@ export function Canvas() {
       const selected = state.project.scene.objects.find(
         (o) => o.id === state.selected[0],
       );
-      if (state.selected.length === 1 && selected?.kind === "track")
+      if (
+        state.selected.length === 1 &&
+        (selected?.kind === "block" || selected?.kind === "seesaw")
+      ) {
+        const handle = worldPoint(selected, [
+          0,
+          selected.shape.height / 2 + 0.3,
+        ]);
+        if (distance(handle, p) < 12 / size.current.scale) {
+          interaction.current = {
+            points: [p],
+            start: p,
+            original: clone(selected),
+            drag: clone(selected),
+            rotate: true,
+          };
+          return;
+        }
+      }
+      if (
+        state.selected.length === 1 &&
+        selected?.kind === "track" &&
+        !(state.challenge !== undefined && !selected.sourceStrokeIds.length)
+      )
         for (let i = 0; i < selected.shape.points.length; i++) {
           const v = selected.shape.points[i],
             a = selected.transform.rotation;
@@ -263,7 +404,10 @@ export function Canvas() {
         selected: groupHit ? state.selected : hit ? [hit.id] : [],
         anchor: p,
       });
-      if (hit)
+      if (
+        hit &&
+        !(state.challenge !== undefined && !hit.sourceStrokeIds.length)
+      )
         interaction.current = {
           points: [p],
           start: p,
@@ -346,7 +490,14 @@ export function Canvas() {
       return;
     }
     if (it.drag && it.original) {
-      if (it.handle !== undefined && it.drag.kind === "track") {
+      if (it.rotate) {
+        it.drag.transform.rotation =
+          Math.atan2(
+            p[1] - it.original.transform.position[1],
+            p[0] - it.original.transform.position[0],
+          ) -
+          Math.PI / 2;
+      } else if (it.handle !== undefined && it.drag.kind === "track") {
         const a = -it.original.transform.rotation,
           x = p[0] - it.original.transform.position[0],
           y = p[1] - it.original.transform.position[1];
@@ -473,6 +624,30 @@ function draw(
   ctx.strokeRect(0, 0, 12, 8);
   const s = store.get();
   const sim = runtime.current;
+  if (s.showTrails) {
+    const trajectories =
+      s.mode === "editing" && prediction.project === s.project
+        ? prediction.points
+        : sim?.trajectories;
+    if (trajectories)
+      [...trajectories].forEach(([id, points], index) => {
+        ctx.strokeStyle = ["#6672df", "#dd8660", "#31947b"][index % 3];
+        ctx.globalAlpha = 0.65;
+        ctx.lineWidth = 0.025;
+        ctx.setLineDash(s.mode === "editing" ? [0.09, 0.07] : []);
+        poly(ctx, points);
+        ctx.stroke();
+        const end = points.at(-1);
+        if (end) {
+          ctx.beginPath();
+          ctx.arc(...end, 0.05, 0, Math.PI * 2);
+          ctx.fillStyle = ctx.strokeStyle;
+          ctx.fill();
+        }
+      });
+    ctx.globalAlpha = 1;
+    ctx.setLineDash([]);
+  }
   const object = (o: SceneObject, alpha = 1, dash = false) => {
     ctx.save();
     ctx.globalAlpha = alpha;
@@ -485,6 +660,22 @@ function draw(
       path(ctx, g);
       ctx.fill();
       if (dash) ctx.stroke();
+    }
+    if (
+      o.kind === "seesaw" ||
+      s.project.scene.constraints.some((j) => j.bodyId === o.id)
+    ) {
+      const original = s.project.scene.objects.find((b) => b.id === o.id)!;
+      const pivot =
+        o.kind === "seesaw"
+          ? original.transform.position
+          : s.project.scene.constraints.find((j) => j.bodyId === o.id)!.anchor;
+      ctx.beginPath();
+      ctx.arc(...pivot, 0.08, 0, Math.PI * 2);
+      ctx.fillStyle = "#344354";
+      ctx.fill();
+      ctx.strokeStyle = "#ffffff";
+      ctx.stroke();
     }
     if (o.kind === "ball") {
       ctx.strokeStyle = "#8d632f";
@@ -577,7 +768,25 @@ function draw(
       if (
         s.mode === "editing" &&
         s.selected.length === 1 &&
-        o.kind === "track"
+        (o.kind === "block" || o.kind === "seesaw")
+      ) {
+        const top = worldPoint(o, [0, o.shape.height / 2]),
+          handle = worldPoint(o, [0, o.shape.height / 2 + 0.3]);
+        ctx.beginPath();
+        ctx.moveTo(...top);
+        ctx.lineTo(...handle);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.arc(...handle, 0.08, 0, Math.PI * 2);
+        ctx.fillStyle = "#fff";
+        ctx.fill();
+        ctx.stroke();
+      }
+      if (
+        s.mode === "editing" &&
+        s.selected.length === 1 &&
+        o.kind === "track" &&
+        !(s.challenge !== undefined && !o.sourceStrokeIds.length)
       ) {
         for (const p of o.shape.points) {
           ctx.fillStyle = "#fff";
@@ -688,11 +897,18 @@ function path(ctx: CanvasRenderingContext2D, g: Primitive) {
     ctx.arc(...g.b, g.radius, angle - Math.PI / 2, angle + Math.PI / 2);
     ctx.closePath();
   } else {
-    ctx.rect(
-      g.center[0] - g.half[0],
-      g.center[1] - g.half[1],
-      g.half[0] * 2,
-      g.half[1] * 2,
-    );
+    const corners: Vec[] = [
+      [-g.half[0], -g.half[1]],
+      [g.half[0], -g.half[1]],
+      [g.half[0], g.half[1]],
+      [-g.half[0], g.half[1]],
+    ];
+    corners.forEach(([x, y], i) => {
+      const px = g.center[0] + x * Math.cos(g.angle) - y * Math.sin(g.angle);
+      const py = g.center[1] + x * Math.sin(g.angle) + y * Math.cos(g.angle);
+      if (i) ctx.lineTo(px, py);
+      else ctx.moveTo(px, py);
+    });
+    ctx.closePath();
   }
 }

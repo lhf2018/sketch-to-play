@@ -29,7 +29,29 @@ const base = {
   transform,
   sourceStrokeIds: z.array(z.string()).max(200),
 };
+const plank = z.strictObject({
+  type: z.literal("rectangle"),
+  width: num.min(0.1).max(4),
+  height: num.min(0.1).max(2),
+});
+const dynamic = z.strictObject({
+  ...material,
+  bodyType: z.literal("dynamic"),
+  mass: num.min(0.1).max(10),
+});
 export const objectSchema = z.discriminatedUnion("kind", [
+  z.strictObject({
+    ...base,
+    kind: z.literal("block"),
+    shape: plank,
+    physics: dynamic,
+  }),
+  z.strictObject({
+    ...base,
+    kind: z.literal("seesaw"),
+    shape: plank,
+    physics: dynamic,
+  }),
   z.strictObject({
     ...base,
     kind: z.literal("ball"),
@@ -95,7 +117,16 @@ export const sceneSchema = z.strictObject({
     boundaries: z.literal("sides-and-floor"),
   }),
   objects: z.array(objectSchema).max(limits.objects),
-  constraints: z.array(z.never()).max(0),
+  constraints: z
+    .array(
+      z.strictObject({
+        id: z.string(),
+        type: z.literal("hinge"),
+        bodyId: z.string(),
+        anchor: point,
+      }),
+    )
+    .max(30),
   objectives: z
     .array(
       z.strictObject({
@@ -141,6 +172,17 @@ export function makeObject(kind: Kind, position: Vec): SceneObject {
     restitution: 0.2,
     collisionEnabled: true as const,
   };
+  if (kind === "block" || kind === "seesaw")
+    return {
+      ...b,
+      kind,
+      shape: {
+        type: "rectangle",
+        width: kind === "seesaw" ? 2.6 : 0.3,
+        height: kind === "seesaw" ? 0.16 : 1,
+      },
+      physics: { ...p, bodyType: "dynamic", mass: 1 },
+    };
   if (kind === "ball")
     return {
       ...b,
@@ -251,6 +293,15 @@ export function worldPoint(o: SceneObject, p: Vec): Vec {
   ];
 }
 export function geometry(o: SceneObject): Primitive[] {
+  if (o.kind === "block" || o.kind === "seesaw")
+    return [
+      {
+        type: "box",
+        center: o.transform.position,
+        half: [o.shape.width / 2, o.shape.height / 2],
+        angle: o.transform.rotation,
+      },
+    ];
   if (o.kind === "ball")
     return [
       { type: "circle", center: o.transform.position, radius: o.shape.radius },
@@ -353,6 +404,60 @@ export function bounds(g: Primitive): [number, number, number, number] {
       Math.abs(Math.cos(g.angle)) * g.half[1];
   return [g.center[0] - x, g.center[1] - y, g.center[0] + x, g.center[1] + y];
 }
+export function boxCorners(g: Extract<Primitive, { type: "box" }>): Vec[] {
+  return (
+    [
+      [-1, -1],
+      [1, -1],
+      [1, 1],
+      [-1, 1],
+    ] as Vec[]
+  ).map(([x, y]) => [
+    g.center[0] +
+      x * g.half[0] * Math.cos(g.angle) -
+      y * g.half[1] * Math.sin(g.angle),
+    g.center[1] +
+      x * g.half[0] * Math.sin(g.angle) +
+      y * g.half[1] * Math.cos(g.angle),
+  ]);
+}
+function boxOverlap(
+  a: Extract<Primitive, { type: "box" }>,
+  b: Primitive,
+): boolean {
+  if (b.type === "box" && b.sensor) return false;
+  if (b.type === "circle") return signedDistance(b.center, a) < b.radius - 0.01;
+  const corners = boxCorners(a);
+  if (b.type === "capsule")
+    return (
+      signedDistance(b.a, a) < -0.005 ||
+      signedDistance(b.b, a) < -0.005 ||
+      corners.some(
+        (v, i) =>
+          segmentSegmentDistance(v, corners[(i + 1) % 4], b.a, b.b) <
+          b.radius - 0.005,
+      )
+    );
+  const other = boxCorners(b);
+  // Separating axis test, allowing touching surfaces without blocking playback.
+  for (const angle of [
+    a.angle,
+    a.angle + Math.PI / 2,
+    b.angle,
+    b.angle + Math.PI / 2,
+  ]) {
+    const project = (v: Vec) => v[0] * Math.cos(angle) + v[1] * Math.sin(angle);
+    const pa = corners.map(project),
+      pb = other.map(project);
+    if (
+      Math.min(Math.max(...pa), Math.max(...pb)) -
+        Math.max(Math.min(...pa), Math.min(...pb)) <=
+      0.005
+    )
+      return false;
+  }
+  return true;
+}
 export type Issue = {
   code: string;
   severity: "invalid" | "blocked" | "warning";
@@ -384,7 +489,7 @@ export function validate(scene: Scene): Issue[] {
   for (const o of scene.objects) {
     if (ids.has(o.id)) add("DUPLICATE_ID", "invalid", [o.id], "对象 ID 重复");
     ids.add(o.id);
-    if (o.kind === "ball") balls++;
+    if (o.physics.bodyType === "dynamic") balls++;
     if (o.kind === "track") {
       segments += o.shape.points.length - 1;
       if (
@@ -415,6 +520,25 @@ export function validate(scene: Scene): Issue[] {
     add("CAPACITY", "invalid", [], "超出场景容量限制");
   for (let i = 0; i < scene.objects.length; i++) {
     const a = scene.objects[i];
+    if (a.kind === "block" || a.kind === "seesaw") {
+      const shape = geometry(a)[0] as Extract<Primitive, { type: "box" }>;
+      for (const b of scene.objects) {
+        if (
+          b.id === a.id ||
+          b.kind === "ball" ||
+          ((b.kind === "block" || b.kind === "seesaw") &&
+            scene.objects.indexOf(b) < i)
+        )
+          continue;
+        if (geometry(b).some((g) => boxOverlap(shape, g)))
+          add(
+            "OVERLAP",
+            "blocked",
+            [a.id, b.id],
+            "动态组件与其他对象重叠，请拖动分开",
+          );
+      }
+    }
     if (a.kind !== "ball") continue;
     for (const b of scene.objects) {
       if (b.id === a.id) continue;
@@ -428,6 +552,28 @@ export function validate(scene: Scene): Issue[] {
       )
         add("OVERLAP", "blocked", [a.id, b.id], "球与其他对象重叠，请拖动分开");
     }
+  }
+  const jointIds = new Set<string>();
+  for (const joint of scene.constraints) {
+    const body = scene.objects.find((o) => o.id === joint.bodyId);
+    if (
+      jointIds.has(joint.id) ||
+      !body ||
+      body.kind !== "block" ||
+      joint.anchor[0] < 0 ||
+      joint.anchor[0] > 12 ||
+      joint.anchor[1] < 0 ||
+      joint.anchor[1] > 8
+    )
+      add(
+        "JOINT",
+        "invalid",
+        [joint.bodyId],
+        "铰链引用或锚点无效（仅支持动态木块）",
+      );
+    jointIds.add(joint.id);
+    if (scene.constraints.filter((j) => j.bodyId === joint.bodyId).length > 1)
+      add("JOINT", "invalid", [joint.bodyId], "每个木块最多一个固定支点");
   }
   for (const target of scene.objectives)
     if (target.enabled) {
@@ -503,13 +649,7 @@ export function lassoHit(o: SceneObject, poly: Vec[]): boolean {
             g.radius,
         )
       );
-    const [l, b, r, t] = bounds(g),
-      corners: Vec[] = [
-        [l, b],
-        [r, b],
-        [r, t],
-        [l, t],
-      ];
+    const corners = boxCorners(g);
     return (
       corners.some((p) => pointInPolygon(p, poly)) ||
       poly.some((p, i) =>
@@ -728,6 +868,15 @@ export function applyPatch(
       after = objectSchema.parse({ ...before, ...op.changes });
     if (before.physics.bodyType !== after.physics.bodyType)
       throw Error("不能修改物体类型");
+    for (const joint of next.constraints.filter((j) => j.bodyId === before.id))
+      joint.anchor = [
+        joint.anchor[0] +
+          after.transform.position[0] -
+          before.transform.position[0],
+        joint.anchor[1] +
+          after.transform.position[1] -
+          before.transform.position[1],
+      ];
     next.objects[index] = after;
   }
   for (const target of next.objectives)
@@ -736,6 +885,9 @@ export function applyPatch(
       !next.objects.some((o) => o.id === target.cupId)
     )
       target.enabled = false;
+  next.constraints = next.constraints.filter((j) =>
+    next.objects.some((o) => o.id === j.bodyId && o.kind === "block"),
+  );
   const bad = validate(next).find((i) => i.severity !== "warning");
   if (bad) throw Error(bad.message);
   return next;
@@ -850,4 +1002,39 @@ export function steepenTrack(object: SceneObject): SceneObject {
     p[1] + length * Math.sin(angle),
   ];
   return o;
+}
+
+/** Ready-to-play chain-reaction examples using existing scene contracts. */
+export function chainExample(which: "domino" | "lever"): Project {
+  const p = emptyProject();
+  if (which === "domino") {
+    const ball = makeObject("ball", [2, 3]);
+    const ramp = makeObject("track", [0, 0]);
+    if (ramp.kind === "track")
+      ramp.shape.points = [
+        [1, 2.5],
+        [3.8, 0.3],
+      ];
+    p.scene.objects = [ball, ramp];
+    for (let i = 0; i < 7; i++) {
+      const block = makeObject("block", [4.4 + i * 0.65, 0.52]);
+      if (block.kind === "block") {
+        block.shape.width = 0.18;
+        block.physics.mass = 0.3;
+      }
+      p.scene.objects.push(block);
+    }
+  } else {
+    const board = makeObject("seesaw", [6, 1]);
+    const weight = makeObject("block", [5.1, 4]);
+    if (weight.kind === "block") {
+      weight.shape.width = 0.6;
+      weight.shape.height = 0.6;
+      weight.physics.mass = 4;
+    }
+    const ball = makeObject("ball", [7, 1.3]);
+    if (ball.kind === "ball") ball.physics.mass = 0.1;
+    p.scene.objects = [board, weight, ball];
+  }
+  return p;
 }

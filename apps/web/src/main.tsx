@@ -1,3 +1,4 @@
+import { challenges } from "../../../packages/core/src/challenges";
 import React, {
   useEffect,
   useRef,
@@ -10,6 +11,7 @@ import {
   clone,
   emptyProject,
   example,
+  chainExample,
   fitStroke,
   parseProject,
   validate,
@@ -20,7 +22,14 @@ import {
   type SceneObject,
 } from "@sketch/core";
 import { store, type Tool } from "./editor/store";
-import { Canvas, play, resetSimulation, runtime } from "./canvas/Canvas";
+import {
+  Canvas,
+  play,
+  resetSimulation,
+  runtime,
+  previewTrajectory,
+  singleStep,
+} from "./canvas/Canvas";
 import { load, save, markLoaded } from "./persistence/storage";
 import { cropStrokes } from "./ai/crop";
 import "./style.css";
@@ -38,7 +47,14 @@ if (import.meta.env.DEV)
     },
   });
 
-const names = { ball: "小球", track: "轨道", cup: "杯子", spring: "弹簧" };
+const names = {
+  ball: "小球",
+  track: "轨道",
+  cup: "杯子",
+  spring: "弹簧",
+  block: "木块",
+  seesaw: "跷跷板",
+};
 const tools: Array<{ id: Tool; icon: string; label: string; key: string }> = [
   { id: "select", icon: "↖", label: "选择", key: "V" },
   { id: "draw", icon: "✎", label: "画笔", key: "P" },
@@ -52,6 +68,7 @@ function App() {
     [ai, setAi] = useState({ enabled: false, model: "", image: false }),
     [showExamples, setShowExamples] = useState(false),
     [showHelp, setShowHelp] = useState(false),
+    [showChallenges, setShowChallenges] = useState(false),
     [recognition, setRecognition] = useState<ReturnType<typeof cropStrokes>>();
   const input = useRef<HTMLInputElement>(null),
     request = useRef<AbortController | undefined>(undefined),
@@ -59,6 +76,8 @@ function App() {
     activeId = useRef("");
   const project = s.project,
     editing = s.mode === "editing";
+  const challenge =
+    s.challenge !== undefined ? challenges[s.challenge] : undefined;
   const selected = project.scene.objects.find((o) => o.id === s.selected[0]);
   const issues = validate(project.scene);
   const pending = project.strokes.filter((x) => x.status !== "converted");
@@ -70,6 +89,22 @@ function App() {
         if (p) {
           markLoaded(p);
           store.replace(p);
+        }
+        try {
+          const completed = JSON.parse(
+            localStorage.getItem("sketch-completed") ?? "[]",
+          );
+          if (Array.isArray(completed))
+            store.set({
+              completed: completed.filter(
+                (v: unknown) => typeof v === "string",
+              ),
+            });
+          const active = localStorage.getItem("sketch-active-challenge");
+          if (active !== null && challenges[Number(active)])
+            store.enterChallenge(Number(active));
+        } catch {
+          /* Browser storage is optional. */
         }
         setBooted(true);
       })
@@ -91,8 +126,21 @@ function App() {
     if (!booted) return;
     store.set({ saveStatus: "保存中…" });
     const current = project;
+    const challengeIndex = s.challenge;
     const timer = setTimeout(() => {
-      save(current)
+      (challengeIndex === undefined
+        ? save(current)
+        : Promise.resolve().then(() => {
+            localStorage.setItem(
+              `sketch-challenge-${challengeIndex}`,
+              JSON.stringify(current),
+            );
+            localStorage.setItem(
+              "sketch-active-challenge",
+              String(challengeIndex),
+            );
+          })
+      )
         .then(() => {
           if (store.get().project === current)
             store.set({ saveStatus: "已保存在本机" });
@@ -102,7 +150,7 @@ function App() {
         );
     }, 500);
     return () => clearTimeout(timer);
-  }, [project, booted]);
+  }, [project, booted, s.challenge]);
   useEffect(() => {
     const listener = (e: KeyboardEvent) => {
       if ((e.target as HTMLElement).matches("input,textarea,select")) return;
@@ -143,8 +191,31 @@ function App() {
     window.addEventListener("beforeunload", listener);
     return () => window.removeEventListener("beforeunload", listener);
   }, []);
+  async function openChallenge(index: number, restore = true) {
+    try {
+      if (store.get().challenge === undefined) await save(store.get().project);
+      resetSimulation();
+      store.enterChallenge(index, restore);
+      setShowChallenges(false);
+    } catch (e) {
+      store.set({ message: `无法进入挑战：${(e as Error).message}` });
+    }
+  }
+  function leaveChallenge() {
+    resetSimulation();
+    store.leaveChallenge();
+    try {
+      localStorage.removeItem("sketch-active-challenge");
+    } catch {
+      /* Optional storage. */
+    }
+  }
   async function replace(p: Project) {
     try {
+      if (store.get().challenge !== undefined) {
+        store.set({ message: "请先返回自由创作，再切换或导入场景" });
+        return;
+      }
       await save(store.get().project);
       epoch.current++;
       resetSimulation();
@@ -396,10 +467,24 @@ function App() {
       </header>
       <section className="topbar">
         <div className="breadcrumbs">
-          工作台 <span>/</span> 自由创作{" "}
+          工作台 <span>/</span> {challenge ? "挑战模式" : "自由创作"}{" "}
           <span className="save-state">● {s.saveStatus}</span>
         </div>
         <div className="file-actions">
+          <button
+            disabled={!["editing", "running", "paused"].includes(s.mode)}
+            onClick={() => setShowChallenges(true)}
+          >
+            ⚑ 挑战模式
+          </button>
+          {challenge && (
+            <button
+              disabled={!["editing", "running", "paused"].includes(s.mode)}
+              onClick={leaveChallenge}
+            >
+              返回自由创作
+            </button>
+          )}
           <button
             disabled={!editing}
             onClick={() => void replace(emptyProject())}
@@ -439,6 +524,42 @@ function App() {
               2D 沙盒<span>12 × 8 m · 地球重力</span>
             </div>
           </div>
+          {challenge && (
+            <section className="challenge-banner" aria-label="当前挑战">
+              <div>
+                <strong>
+                  {s.challenge! + 1} / 5 · {challenge.title}
+                </strong>
+                <p>{challenge.hint}</p>
+                <small>
+                  固定组件已锁定 · 已画 {project.strokes.length} /{" "}
+                  {challenge.maxStrokes} 笔 · 30 秒内稳定入杯
+                </small>
+              </div>
+              <div>
+                <button
+                  disabled={!["editing", "running", "paused"].includes(s.mode)}
+                  onClick={() => openChallenge(s.challenge!, false)}
+                >
+                  重新开始
+                </button>
+                {s.challengeWon && (
+                  <>
+                    <strong role="alert">挑战成功！</strong>
+                    <button
+                      onClick={() =>
+                        s.challenge! < 4
+                          ? openChallenge(s.challenge! + 1)
+                          : setShowChallenges(true)
+                      }
+                    >
+                      {s.challenge! < 4 ? "下一关" : "查看全部挑战"}
+                    </button>
+                  </>
+                )}
+              </div>
+            </section>
+          )}
           <div className="canvas-frame">
             <div className="canvas-toolbar">
               <div className="tool-group">
@@ -576,6 +697,40 @@ function App() {
                       : "编辑模式"}
               </span>
               <div className="play-actions">
+                <label className="speed-control">
+                  速度{" "}
+                  <select
+                    aria-label="播放速度"
+                    value={s.speed}
+                    onChange={(e) =>
+                      store.set({ speed: Number(e.target.value) })
+                    }
+                  >
+                    <option value="1">1×</option>
+                    <option value="0.5">0.5×</option>
+                    <option value="0.25">0.25×</option>
+                  </select>
+                </label>
+                <button
+                  aria-pressed={s.showTrails}
+                  onClick={() => store.set({ showTrails: !s.showTrails })}
+                >
+                  轨迹{s.showTrails ? "开" : "关"}
+                </button>
+                <button
+                  disabled={!editing}
+                  onClick={() => void previewTrajectory()}
+                >
+                  {s.predicting ? "取消预测" : "预测轨迹"}
+                </button>
+                <button
+                  disabled={
+                    s.mode !== "paused" || s.challengeWon || s.challengeFailed
+                  }
+                  onClick={singleStep}
+                >
+                  单步
+                </button>
                 <button
                   className="reset-button"
                   disabled={!["running", "paused"].includes(s.mode)}
@@ -585,7 +740,11 @@ function App() {
                 </button>
                 <button
                   className="play-button"
-                  disabled={!["editing", "running", "paused"].includes(s.mode)}
+                  disabled={
+                    !["editing", "running", "paused"].includes(s.mode) ||
+                    s.challengeWon ||
+                    s.challengeFailed
+                  }
                   onClick={() => void start()}
                 >
                   {s.mode === "running"
@@ -642,11 +801,13 @@ function App() {
                   { kind: "track", icon: "╱", en: "RAMP" },
                   { kind: "cup", icon: "∪", en: "CUP" },
                   { kind: "spring", icon: "▤", en: "SPRING" },
+                  { kind: "block", icon: "▥", en: "BLOCK" },
+                  { kind: "seesaw", icon: "⚖", en: "SEESAW" },
                 ] as const
               ).map((c) => (
                 <button
                   key={c.kind}
-                  disabled={!editing}
+                  disabled={!editing || !!challenge}
                   className={`component ${c.kind} ${s.tool === c.kind ? "chosen" : ""}`}
                   aria-pressed={s.tool === c.kind}
                   onClick={() =>
@@ -745,13 +906,50 @@ function App() {
                         track: "#567666",
                         cup: "#ac99c7",
                         spring: "#d77e65",
+                        block: "#bc8c57",
+                        seesaw: "#649eac",
                       }[selected.kind],
                     }}
                   />
                   {names[selected.kind]}
                   <code>{selected.id.slice(0, 6)}</code>
                 </div>
-                <Properties object={selected} disabled={!editing} />
+                <Properties
+                  object={selected}
+                  disabled={
+                    !editing ||
+                    (!!challenge && !selected.sourceStrokeIds.length)
+                  }
+                />
+                {selected.kind === "block" && (
+                  <button
+                    disabled={!editing || !!challenge}
+                    onClick={() =>
+                      store.change((p) => {
+                        const joint = p.scene.constraints.find(
+                          (j) => j.bodyId === selected.id,
+                        );
+                        if (joint)
+                          p.scene.constraints = p.scene.constraints.filter(
+                            (j) => j.id !== joint.id,
+                          );
+                        else
+                          p.scene.constraints.push({
+                            id: crypto.randomUUID(),
+                            type: "hinge",
+                            bodyId: selected.id,
+                            anchor: [...selected.transform.position],
+                          });
+                      })
+                    }
+                  >
+                    {project.scene.constraints.some(
+                      (j) => j.bodyId === selected.id,
+                    )
+                      ? "移除固定铰链"
+                      : "在中心添加固定铰链"}
+                  </button>
+                )}
                 {selected.kind === "track" &&
                   selected.shape.points.length === 2 && (
                     <button
@@ -950,6 +1148,43 @@ function App() {
           </div>
         </div>
       )}
+      {showChallenges && (
+        <div
+          className="modal-backdrop"
+          onClick={() => setShowChallenges(false)}
+        >
+          <section
+            className="modal"
+            role="dialog"
+            aria-label="挑战关卡"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button className="close" onClick={() => setShowChallenges(false)}>
+              ×
+            </button>
+            <span className="eyebrow">DRAW YOUR SOLUTION</span>
+            <h2>补画几笔，让球入杯</h2>
+            <p>固定组件不能修改，重置保留补画；重新开始会清空本关补画。</p>
+            {challenges.map((level, index) => (
+              <button
+                className="example-card"
+                key={level.id}
+                onClick={() => openChallenge(index)}
+              >
+                <span>{s.completed.includes(level.id) ? "✓" : index + 1}</span>
+                <div>
+                  <h3>{level.title}</h3>
+                  <p>
+                    最多 {level.maxStrokes} 笔 ·{" "}
+                    {s.completed.includes(level.id) ? "已完成" : "待挑战"}
+                  </p>
+                </div>
+                <b>↗</b>
+              </button>
+            ))}
+          </section>
+        </div>
+      )}
       {showExamples && (
         <div className="modal-backdrop" onClick={() => setShowExamples(false)}>
           <section className="modal" onClick={(e) => e.stopPropagation()}>
@@ -981,6 +1216,24 @@ function App() {
               </div>
               <b>↗</b>
             </button>
+            {(["domino", "lever"] as const).map((kind) => (
+              <button
+                key={kind}
+                className="example-card"
+                onClick={() => void replace(chainExample(kind))}
+              >
+                <span>{kind === "domino" ? "▥" : "⚖"}</span>
+                <div>
+                  <h3>{kind === "domino" ? "木块接力推球" : "跷跷板送球"}</h3>
+                  <p>
+                    {kind === "domino"
+                      ? "让滚动的小球推倒整排木块。"
+                      : "重物落下，杠杆把另一端的小球送起来。"}
+                  </p>
+                </div>
+                <b>↗</b>
+              </button>
+            ))}
           </section>
         </div>
       )}
@@ -1087,6 +1340,29 @@ function Properties({
       {number("位置 Y · m", o.transform.position[1], 0, 8, 0.1, (x, v) => {
         x.transform.position[1] = v;
       })}
+      {(o.kind === "block" || o.kind === "seesaw") && (
+        <>
+          {number("宽度 · m", o.shape.width, 0.1, 4, 0.1, (x, v) => {
+            if (x.kind === "block" || x.kind === "seesaw") x.shape.width = v;
+          })}
+          {number("高度 · m", o.shape.height, 0.1, 2, 0.1, (x, v) => {
+            if (x.kind === "block" || x.kind === "seesaw") x.shape.height = v;
+          })}
+          {number(
+            "旋转 · °",
+            (o.transform.rotation * 180) / Math.PI,
+            -180,
+            180,
+            5,
+            (x, v) => {
+              x.transform.rotation = (v * Math.PI) / 180;
+            },
+          )}
+          {number("质量 · kg", o.physics.mass, 0.1, 10, 0.1, (x, v) => {
+            if (x.kind === "block" || x.kind === "seesaw") x.physics.mass = v;
+          })}
+        </>
+      )}
       {o.kind === "ball" && (
         <>
           {number("半径 · m", o.shape.radius, 0.1, 0.5, 0.02, (x, v) => {

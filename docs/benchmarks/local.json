@@ -1,5 +1,5 @@
 {
-  "date": "2026-11-14T17:36:01.778Z",
+  "date": "2026-11-14T19:46:21.163Z",
   "host": {
     "platform": "win32",
     "cpu": "12th Gen Intel(R) Core(TM) i5-12400F",
@@ -11,11 +11,11 @@
   "balls": 30,
   "segments": 160,
   "duration": 60000,
-  "frames": 3601,
-  "physicsSteps": 7199,
-  "meanFps": 60.01066560010815,
-  "frameP95": 16.799999999999727,
+  "frames": 3602,
+  "physicsSteps": 7201,
+  "meanFps": 60.01712870858425,
+  "frameP95": 16.799999999999272,
   "physicsStepP95": 0.30000000074505806,
-  "coldPhysicsInitMs": 61.70000000298023,
+  "coldPhysicsInitMs": 67.70000000298023,
   "scope": "Development build, headless Chromium, full Canvas rendering and simulation. Not the PRD reference hardware or production-load test."
 }
