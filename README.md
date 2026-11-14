@@ -258,6 +258,7 @@ npm run start -w apps/api
 - [产品需求 PRD](PRD.md)
 - [技术方案](TECH_DESIGN.md)
 - [实施状态与验收边界](docs/IMPLEMENTATION_STATUS.md)
+- [后续产品规划](docs/ROADMAP.md)
 - [测试与性能记录](docs/benchmarks/REPORT.md)
 
 弹簧对同一颗球的连续弹射会衰减：每次保留上一次冲量的 70%，弹跳逐渐变低并最终停稳。不同小球独立计算；重置模拟会恢复完整弹力，设计稿中的冲量参数不变。
