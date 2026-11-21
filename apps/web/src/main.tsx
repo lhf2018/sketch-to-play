@@ -33,6 +33,7 @@ import {
 import { load, save, markLoaded } from "./persistence/storage";
 import { cropStrokes } from "./ai/crop";
 import "./style.css";
+import "./studio.css";
 
 // Dev-only bridge for browser regression and measurement; removed in production.
 if (import.meta.env.DEV)
@@ -69,6 +70,7 @@ function App() {
     [showExamples, setShowExamples] = useState(false),
     [showHelp, setShowHelp] = useState(false),
     [showChallenges, setShowChallenges] = useState(false),
+    [challengeChapter, setChallengeChapter] = useState("坡道进阶"),
     [recognition, setRecognition] = useState<ReturnType<typeof cropStrokes>>();
   const input = useRef<HTMLInputElement>(null),
     request = useRef<AbortController | undefined>(undefined),
@@ -452,13 +454,8 @@ function App() {
           </span>
           <div>
             sketch<span className="brand-to"> to </span>play
-            <small>把想象，交给物理。</small>
           </div>
         </a>
-        <div className="document-name">
-          <span className="document-dot" />
-          我的物理游乐场 <span className="tag">本地草稿</span>
-        </div>
         <nav>
           <button onClick={() => setShowHelp(true)}>
             使用指南 <span>↗</span>
@@ -473,7 +470,10 @@ function App() {
         <div className="file-actions">
           <button
             disabled={!["editing", "running", "paused"].includes(s.mode)}
-            onClick={() => setShowChallenges(true)}
+            onClick={() => {
+              if (challenge) setChallengeChapter(challenge.chapter);
+              setShowChallenges(true);
+            }}
           >
             ⚑ 挑战模式
           </button>
@@ -512,23 +512,11 @@ function App() {
       </section>
       <main className="workspace">
         <section className="stage-column">
-          <div className="stage-heading">
-            <div>
-              <span className="eyebrow">YOUR LITTLE PHYSICS LAB</span>
-              <h1>
-                画出来，<em>玩起来。</em>
-              </h1>
-              <p>几笔涂鸦，一点重力，还有无限种可能。</p>
-            </div>
-            <div className="world-label">
-              2D 沙盒<span>12 × 8 m · 地球重力</span>
-            </div>
-          </div>
           {challenge && (
             <section className="challenge-banner" aria-label="当前挑战">
               <div>
                 <strong>
-                  {s.challenge! + 1} / 5 · {challenge.title}
+                  {s.challenge! + 1} / {challenges.length} · {challenge.title}
                 </strong>
                 <p>{challenge.hint}</p>
                 <small>
@@ -548,12 +536,14 @@ function App() {
                     <strong role="alert">挑战成功！</strong>
                     <button
                       onClick={() =>
-                        s.challenge! < 4
+                        s.challenge! < challenges.length - 1
                           ? openChallenge(s.challenge! + 1)
                           : setShowChallenges(true)
                       }
                     >
-                      {s.challenge! < 4 ? "下一关" : "查看全部挑战"}
+                      {s.challenge! < challenges.length - 1
+                        ? "下一关"
+                        : "查看全部挑战"}
                     </button>
                   </>
                 )}
@@ -664,23 +654,15 @@ function App() {
                       }
                     />
                   </label>
-                  <small>画完即可碰撞 · 粗细就是实体厚度</small>
                 </div>
               )}
               <Canvas />
-              <span className="canvas-caption">
-                {s.mode === "running"
-                  ? "● LIVE SIMULATION"
-                  : s.mode === "paused"
-                    ? "Ⅱ PAUSED"
-                    : "✎ EDIT YOUR WORLD"}
-              </span>
               <div className="canvas-scale">↔ 1 m</div>
               {project.scene.objects.length === 0 &&
                 project.strokes.length === 0 && (
                   <div className="empty-hint">
                     <span>〰</span>
-                    <h2>这里，是你的游乐场</h2>
+
                     <p>用画笔画一条坡，或从右侧放一个小球。</p>
                   </div>
                 )}
@@ -764,45 +746,22 @@ function App() {
             <span>✦</span>
             {s.message}
           </div>
-          <div className="experience-tips">
-            <div>
-              <b>01</b>
-              <span>
-                画几笔<small>自由画出有碰撞厚度的轨道</small>
-              </span>
-            </div>
-            <i>→</i>
-            <div>
-              <b>02</b>
-              <span>
-                让它动起来<small>播放，观察你的物理世界</small>
-              </span>
-            </div>
-            <i>→</i>
-            <div>
-              <b>03</b>
-              <span>
-                换个想法再玩<small>框选局部，用一句话修改</small>
-              </span>
-            </div>
-          </div>
         </section>
         <aside className="sidebar">
           <section className="panel components">
             <div className="panel-title">
-              <h2>给世界加点东西</h2>
-              <span>＋</span>
+              <h2>组件</h2>
             </div>
-            <p>选中后连续放置 · 按 V 返回选择</p>
+
             <div className="component-grid">
               {(
                 [
-                  { kind: "ball", icon: "●", en: "BALL" },
-                  { kind: "track", icon: "╱", en: "RAMP" },
-                  { kind: "cup", icon: "∪", en: "CUP" },
-                  { kind: "spring", icon: "▤", en: "SPRING" },
-                  { kind: "block", icon: "▥", en: "BLOCK" },
-                  { kind: "seesaw", icon: "⚖", en: "SEESAW" },
+                  { kind: "ball" },
+                  { kind: "track" },
+                  { kind: "cup" },
+                  { kind: "spring" },
+                  { kind: "block" },
+                  { kind: "seesaw" },
                 ] as const
               ).map((c) => (
                 <button
@@ -818,52 +777,9 @@ function App() {
                   }
                 >
                   <span>
-                    {c.kind === "spring" ? (
-                      <svg
-                        width="36"
-                        height="36"
-                        viewBox="0 0 36 36"
-                        fill="none"
-                        aria-hidden="true"
-                      >
-                        <rect
-                          x="7"
-                          y="27"
-                          width="22"
-                          height="5"
-                          rx="2"
-                          fill="#bb8865"
-                        />
-                        <rect
-                          x="9"
-                          y="7"
-                          width="18"
-                          height="20"
-                          rx="3"
-                          fill="#fff0dd"
-                          stroke="#e8cdb0"
-                        />
-                        <path
-                          d="M12 25L24 22L12 19L24 16L12 13L24 10"
-                          stroke="#bd8054"
-                          strokeWidth="2"
-                          strokeLinejoin="round"
-                        />
-                        <rect
-                          x="6"
-                          y="4"
-                          width="24"
-                          height="5"
-                          rx="2"
-                          fill="#efa65e"
-                        />
-                      </svg>
-                    ) : (
-                      c.icon
-                    )}
+                    <ComponentIcon kind={c.kind} />
                   </span>
                   <strong>{names[c.kind]}</strong>
-                  <small>{c.en}</small>
                 </button>
               ))}
             </div>
@@ -984,7 +900,6 @@ function App() {
             ) : (
               <div className="inspector-empty">
                 <span>↖</span>选择画布中的对象
-                <small>调整它的位置、形状和物理属性</small>
               </div>
             )}
             {s.selected.length > 1 && (
@@ -1018,11 +933,11 @@ function App() {
           <section className="panel ai-panel">
             <div className="panel-title">
               <h2>
-                <span>✧</span> 用一句话，改个玩法
+                <span>✧</span> AI 修改
               </h2>
               <span className="tag">AI</span>
             </div>
-            <p>点击选择一个对象，或用多选工具选择多个。</p>
+
             <textarea
               aria-label="局部修改指令"
               placeholder={"“把这条斜坡变陡一点”\n“在这里加个弹簧”"}
@@ -1054,16 +969,9 @@ function App() {
             <small className="privacy-note">
               {ai.enabled
                 ? "将发送选择对象、指令及必要的邻域数据"
-                : "AI 尚未配置 · 手动编辑和物理模拟始终可用"}
+                : "AI 未配置"}
             </small>
           </section>
-          <div className="note-card">
-            <span>✳</span>
-            <div>
-              没有标准答案，只有下一次尝试。
-              <p>失败也没关系，重置一下，换个角度。</p>
-            </div>
-          </div>
         </aside>
       </main>
       {s.mode === "processing" && (
@@ -1075,7 +983,6 @@ function App() {
       {s.mode === "preview" && s.preview && (
         <div className="preview-dock">
           <div>
-            <span className="eyebrow">PREVIEW CHANGES</span>
             <h3>先看看，再决定</h3>
             <p>{s.message}</p>
             <div className="candidate-list">
@@ -1154,7 +1061,7 @@ function App() {
           onClick={() => setShowChallenges(false)}
         >
           <section
-            className="modal"
+            className="modal challenge-modal"
             role="dialog"
             aria-label="挑战关卡"
             onClick={(e) => e.stopPropagation()}
@@ -1162,26 +1069,59 @@ function App() {
             <button className="close" onClick={() => setShowChallenges(false)}>
               ×
             </button>
-            <span className="eyebrow">DRAW YOUR SOLUTION</span>
-            <h2>补画几笔，让球入杯</h2>
+            <h2>{challenges.length} 关机关挑战</h2>
             <p>固定组件不能修改，重置保留补画；重新开始会清空本关补画。</p>
-            {challenges.map((level, index) => (
-              <button
-                className="example-card"
-                key={level.id}
-                onClick={() => openChallenge(index)}
-              >
-                <span>{s.completed.includes(level.id) ? "✓" : index + 1}</span>
-                <div>
-                  <h3>{level.title}</h3>
-                  <p>
-                    最多 {level.maxStrokes} 笔 ·{" "}
-                    {s.completed.includes(level.id) ? "已完成" : "待挑战"}
-                  </p>
-                </div>
-                <b>↗</b>
-              </button>
-            ))}
+            <div className="challenge-chapters" aria-label="关卡章节">
+              {[...new Set(challenges.map((level) => level.chapter))].map(
+                (chapter) => (
+                  <button
+                    key={chapter}
+                    aria-pressed={chapter === challengeChapter}
+                    onClick={() => setChallengeChapter(chapter)}
+                  >
+                    {chapter}
+                    <small>
+                      {
+                        challenges.filter(
+                          (level) =>
+                            level.chapter === chapter &&
+                            s.completed.includes(level.id),
+                        ).length
+                      }{" "}
+                      /{" "}
+                      {
+                        challenges.filter((level) => level.chapter === chapter)
+                          .length
+                      }
+                    </small>
+                  </button>
+                ),
+              )}
+            </div>
+            <div className="challenge-levels">
+              {challenges.map(
+                (level, index) =>
+                  level.chapter === challengeChapter && (
+                    <button
+                      className="example-card"
+                      key={level.id}
+                      onClick={() => openChallenge(index)}
+                    >
+                      <span>
+                        {s.completed.includes(level.id) ? "✓" : index + 1}
+                      </span>
+                      <div>
+                        <h3>{level.title}</h3>
+                        <p>
+                          第 {index + 1} 关 · 最多 {level.maxStrokes} 笔 ·{" "}
+                          {s.completed.includes(level.id) ? "已完成" : "待挑战"}
+                        </p>
+                      </div>
+                      <b>↗</b>
+                    </button>
+                  ),
+              )}
+            </div>
           </section>
         </div>
       )}
@@ -1191,7 +1131,6 @@ function App() {
             <button className="close" onClick={() => setShowExamples(false)}>
               ×
             </button>
-            <span className="eyebrow">A LITTLE INSPIRATION</span>
             <h2>从一个小实验开始</h2>
             <p>加载示例将保存当前场景。示例中的每个对象都可以修改。</p>
             <button
@@ -1246,7 +1185,6 @@ function App() {
             <button className="close" onClick={() => setRecognition(undefined)}>
               ×
             </button>
-            <span className="eyebrow">RECOGNIZE SKETCH</span>
             <h2>只发送这些待转换笔迹</h2>
             <p>
               最多 20 笔，将发送下方局部图片和笔迹 ID；识别后仍需检查并应用。
@@ -1268,7 +1206,6 @@ function App() {
             <button className="close" onClick={() => setShowHelp(false)}>
               ×
             </button>
-            <span className="eyebrow">QUICK START</span>
             <h2>你的第一分钟</h2>
             <ol>
               <li>点击播放，看球滚动、碰撞；按 Space 暂停。</li>
@@ -1294,6 +1231,103 @@ function App() {
         </button>
       )}
     </div>
+  );
+}
+function ComponentIcon({ kind }: { kind: SceneObject["kind"] }) {
+  return (
+    <svg
+      width="40"
+      height="34"
+      viewBox="0 0 48 40"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      {kind === "ball" && (
+        <>
+          <circle cx="24" cy="20" r="11" fill="#e9ad56" stroke="#c68b38" />
+          <path d="M18 16a7 7 0 0 1 6-3" stroke="#fff5d9" strokeWidth="2.5" />
+          <path d="M25 21h5" stroke="#bd8436" />
+        </>
+      )}
+      {kind === "track" && (
+        <>
+          <path d="m7 10 34 21" stroke="#51766a" strokeWidth="5" />
+          <path d="m7 9 34 21" stroke="#a2baac" strokeWidth="1.2" />
+        </>
+      )}
+      {kind === "cup" && (
+        <>
+          <path
+            d="M12 8v21a4 4 0 0 0 4 4h16a4 4 0 0 0 4-4V8"
+            fill="#c5b8e52b"
+            stroke="#a393c2"
+            strokeWidth="3"
+          />
+          <path d="M17 12v15" stroke="#ffffff" strokeWidth="2.5" />
+          <path d="M17 34h14" stroke="#c6b9db" />
+        </>
+      )}
+      {kind === "spring" && (
+        <>
+          <rect
+            x="11"
+            y="30"
+            width="26"
+            height="5"
+            rx="2"
+            fill="#5a7681"
+            stroke="none"
+          />
+          <path d="M15 29 33 25 15 21 33 17 15 13 33 9" stroke="#718d96" />
+          <rect
+            x="10"
+            y="5"
+            width="28"
+            height="5"
+            rx="2"
+            fill="#e9ae79"
+            stroke="none"
+          />
+        </>
+      )}
+      {kind === "block" && (
+        <>
+          <rect
+            x="12"
+            y="5"
+            width="24"
+            height="30"
+            rx="3"
+            fill="#d8b484"
+            stroke="#b68d60"
+          />
+          <path
+            d="M17 11c5-2 8 3 14 0M17 18c5-2 8 3 14 0M17 25c5-2 8 3 14 0M17 30h8"
+            stroke="#b68d6070"
+            strokeWidth="1.2"
+          />
+        </>
+      )}
+      {kind === "seesaw" && (
+        <>
+          <path d="m24 20-7 14h14Z" fill="#d7e1d4" stroke="#a0b3a0" />
+          <path d="m6 14 36 9" stroke="#6599a1" strokeWidth="5" />
+          <path d="m6 13 36 9" stroke="#c4e0de" strokeWidth="1" />
+          <circle
+            cx="24"
+            cy="19"
+            r="3"
+            fill="#456a71"
+            stroke="#f3f8f3"
+            strokeWidth="1.2"
+          />
+        </>
+      )}
+    </svg>
   );
 }
 function Properties({

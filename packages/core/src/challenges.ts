@@ -1,38 +1,50 @@
-import { clone, example, objectSchema, type Project } from "./index";
+import {
+  clone,
+  example,
+  objectSchema,
+  parseProject,
+  type Project,
+} from "./index";
+import pack from "./challenge-pack.json";
 
 export const challenges = [
-  {
-    id: "bridge",
-    title: "第一笔斜坡",
-    hint: "从小球下方画一条向右下方的坡，把球送进杯子。",
-    maxStrokes: 3,
-  },
-  {
-    id: "mirror",
-    title: "向左出发",
-    hint: "这次杯子在左边，试试反方向的斜坡。",
-    maxStrokes: 3,
-  },
-  {
-    id: "landing",
-    title: "远处的杯子",
-    hint: "杯子更远了，观察落点，延长轨道。",
-    maxStrokes: 3,
-  },
-  {
-    id: "precision",
-    title: "精准落杯",
-    hint: "杯口变窄了，用轨迹预览找准落点。",
-    maxStrokes: 2,
-  },
-  {
-    id: "relay",
-    title: "接力最后一段",
-    hint: "已有半段轨道，补齐余下的路线。",
-    maxStrokes: 2,
-  },
-] as const;
+  ...[
+    {
+      id: "bridge",
+      title: "第一笔斜坡",
+      hint: "从小球下方画一条向右下方的坡，把球送进杯子。",
+      maxStrokes: 3,
+    },
+    {
+      id: "mirror",
+      title: "向左出发",
+      hint: "这次杯子在左边，试试反方向的斜坡。",
+      maxStrokes: 3,
+    },
+    {
+      id: "landing",
+      title: "远处的杯子",
+      hint: "杯子更远了，观察落点，延长轨道。",
+      maxStrokes: 3,
+    },
+    {
+      id: "precision",
+      title: "精准落杯",
+      hint: "杯口变窄了，用轨迹预览找准落点。",
+      maxStrokes: 2,
+    },
+    {
+      id: "relay",
+      title: "接力最后一段",
+      hint: "已有半段轨道，补齐余下的路线。",
+      maxStrokes: 2,
+    },
+  ].map((level) => ({ ...level, chapter: "坡道进阶" })),
+  ...pack.map(({ project: _project, ...level }) => level),
+];
 export function challengeProject(index: number): Project {
+  if (!Number.isInteger(index) || !challenges[index]) throw Error("关卡不存在");
+  if (index >= 5) return parseProject(clone(pack[index - 5].project));
   const p = example("ramp");
   p.scene.sceneId = `challenge-${challenges[index].id}`;
   const [ball, ramp, cup] = p.scene.objects;

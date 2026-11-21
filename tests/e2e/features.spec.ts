@@ -1,5 +1,39 @@
 import { test, expect } from "@playwright/test";
 
+test("campaign chapters expose all fifty levels and the final level has no next button", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "⚑ 挑战模式" }).click();
+  const dialog = page.getByRole("dialog", { name: "挑战关卡" });
+  await expect(
+    dialog.getByRole("heading", { name: "50 关机关挑战" }),
+  ).toBeVisible();
+  for (const chapter of [
+    "坡道进阶",
+    "曲折迷宫",
+    "弹射飞行",
+    "杠杆机关",
+    "综合试炼",
+  ]) {
+    await dialog.getByRole("button", { name: new RegExp(chapter) }).click();
+    await expect(dialog.locator(".example-card")).toHaveCount(10);
+  }
+  await dialog.getByRole("button", { name: /最后的机关/ }).click();
+  await expect(page.getByRole("region", { name: "当前挑战" })).toContainText(
+    "50 / 50",
+  );
+  await page.evaluate(() =>
+    (window as any).__SKETCH_DEV__.store.completeChallenge(),
+  );
+  await expect(
+    page.getByRole("button", { name: "查看全部挑战", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "下一关", exact: true }),
+  ).toHaveCount(0);
+});
+
 test("challenge drawing wins, stores progress, and preserves the free scene", async ({
   page,
 }) => {

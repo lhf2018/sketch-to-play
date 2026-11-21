@@ -1469,6 +1469,36 @@ footer {
   margin-bottom: 16px;
   color: #435286;
 }
+.challenge-modal {
+  width: min(900px, calc(100vw - 40px));
+  max-height: 88vh;
+  overflow-y: auto;
+}
+.challenge-chapters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 20px 0;
+}
+.challenge-chapters button {
+  padding: 10px 14px;
+  border-radius: 10px;
+  background: #eef0f8;
+  color: #455379;
+}
+.challenge-chapters button[aria-pressed="true"] {
+  background: #435cc8;
+  color: white;
+}
+.challenge-chapters small {
+  display: block;
+  margin-top: 4px;
+}
+.challenge-levels {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: 10px;
+}
 .challenge-banner p {
   margin: 6px 0;
   font-size: 13px;

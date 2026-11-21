@@ -607,21 +607,31 @@ function draw(
     { scale, ox, oy, w, h } = view;
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, w, h);
-  ctx.fillStyle = "#f7f8f4";
+  const paper = ctx.createLinearGradient(0, 0, w, h);
+  paper.addColorStop(0, "#fffef8");
+  paper.addColorStop(0.55, "#f8f7f0");
+  paper.addColorStop(1, "#eeeee4");
+  ctx.fillStyle = paper;
   ctx.fillRect(0, 0, w, h);
   ctx.save();
   ctx.translate(ox, oy + 8 * scale);
   ctx.scale(scale, -scale);
-  ctx.fillStyle = "#d5ddd4";
+  ctx.fillStyle = "#c5c7b77d";
   for (let x = 0.25; x < 12; x += 0.25)
     for (let y = 0.25; y < 8; y += 0.25) {
       ctx.beginPath();
       ctx.arc(x, y, 0.011, 0, Math.PI * 2);
       ctx.fill();
     }
-  ctx.strokeStyle = "#c6d0c5";
-  ctx.lineWidth = 0.025;
+  ctx.strokeStyle = "#d1d2c2";
+  ctx.lineWidth = 1 / scale;
   ctx.strokeRect(0, 0, 12, 8);
+  // A shallow stage edge grounds the world without covering its usable area.
+  const floor = ctx.createLinearGradient(0, 0, 0, 0.07);
+  floor.addColorStop(0, "#c3c5b3");
+  floor.addColorStop(1, "#e2e4d6");
+  ctx.fillStyle = floor;
+  ctx.fillRect(0, 0, 12, 0.07);
   const s = store.get();
   const sim = runtime.current;
   if (s.showTrails) {
@@ -654,12 +664,95 @@ function draw(
     ctx.fillStyle = o.color ?? colors[o.kind];
     ctx.strokeStyle = o.color ?? colors[o.kind];
     ctx.lineWidth = 0.04;
+    ctx.lineJoin = "round";
+    ctx.lineCap = "round";
     ctx.setLineDash(dash ? [0.1, 0.07] : []);
+    if (o.kind === "cup") {
+      const [x, y] = o.transform.position;
+      const { innerWidth: width, innerHeight: height } = o.shape;
+      const glass = ctx.createLinearGradient(
+        x - width / 2,
+        y,
+        x + width / 2,
+        y,
+      );
+      glass.addColorStop(0, "#b9b1e32b");
+      glass.addColorStop(0.3, "#ffffff66");
+      glass.addColorStop(1, "#a397d837");
+      ctx.fillStyle = glass;
+      ctx.fillRect(x - width / 2, y + 0.08, width, height);
+      ctx.strokeStyle = "#ffffffb0";
+      ctx.lineWidth = 0.025;
+      ctx.beginPath();
+      ctx.moveTo(x - width / 2 + 0.09, y + height * 0.3);
+      ctx.lineTo(x - width / 2 + 0.09, y + height * 0.85);
+      ctx.stroke();
+    }
     for (const g of o.kind === "spring" ? [] : geometry(o)) {
       if (g.type === "box" && g.sensor) continue;
+      const [left, bottom, right, top] = bounds(g);
+      const material = ctx.createLinearGradient(left, top, right, bottom);
+      const color = o.color ?? colors[o.kind];
+      material.addColorStop(0, color);
+      material.addColorStop(0.48, color);
+      material.addColorStop(1, mixColor(color, "#203548", 0.28));
+      ctx.fillStyle = material;
+      ctx.shadowColor = "#29425126";
+      ctx.shadowBlur = 5 * dpr;
+      ctx.shadowOffsetY = 3 * dpr;
       path(ctx, g);
       ctx.fill();
-      if (dash) ctx.stroke();
+      ctx.shadowColor = "transparent";
+      ctx.shadowBlur = 0;
+      ctx.shadowOffsetY = 0;
+      ctx.strokeStyle = dash ? color : mixColor(color, "#263b4b", 0.25);
+      ctx.lineWidth = dash ? 0.04 : 0.012;
+      ctx.stroke();
+      if (g.type === "capsule") {
+        // Highlight follows the actual track, including user-drawn thickness.
+        ctx.save();
+        path(ctx, g);
+        ctx.clip();
+        ctx.translate(0, g.radius * 0.38);
+        poly(ctx, [g.a, g.b]);
+        ctx.strokeStyle = "#ffffff40";
+        ctx.lineWidth = g.radius * 0.4;
+        ctx.stroke();
+        ctx.restore();
+      }
+      if (o.kind === "block" || o.kind === "seesaw") {
+        ctx.save();
+        path(ctx, g);
+        ctx.clip();
+        ctx.translate(...o.transform.position);
+        ctx.rotate(o.transform.rotation);
+        const { width, height } = o.shape;
+        ctx.strokeStyle = o.kind === "block" ? "#70401d30" : "#ffffff35";
+        ctx.lineWidth = 0.012;
+        for (let row = 1; row < 6; row++) {
+          const y = -height / 2 + (height * row) / 6;
+          ctx.beginPath();
+          ctx.moveTo(-width / 2 + 0.04, y);
+          ctx.bezierCurveTo(
+            -width * 0.2,
+            y + 0.025,
+            width * 0.15,
+            y - 0.025,
+            width / 2 - 0.04,
+            y,
+          );
+          ctx.stroke();
+        }
+        ctx.strokeStyle = "#ffffff65";
+        ctx.lineWidth = 0.02;
+        ctx.strokeRect(
+          -width / 2 + 0.035,
+          -height / 2 + 0.035,
+          Math.max(0, width - 0.07),
+          Math.max(0, height - 0.07),
+        );
+        ctx.restore();
+      }
     }
     if (
       o.kind === "seesaw" ||
@@ -678,6 +771,24 @@ function draw(
       ctx.stroke();
     }
     if (o.kind === "ball") {
+      const [bx, by] = o.transform.position;
+      const radius = o.shape.radius;
+      const glaze = ctx.createRadialGradient(
+        bx - radius * 0.35,
+        by + radius * 0.4,
+        radius * 0.02,
+        bx,
+        by,
+        radius,
+      );
+      glaze.addColorStop(0, "#ffffffd9");
+      glaze.addColorStop(0.3, "#ffffff38");
+      glaze.addColorStop(0.7, "#ffffff00");
+      glaze.addColorStop(1, "#56330e24");
+      ctx.fillStyle = glaze;
+      ctx.beginPath();
+      ctx.arc(bx, by, radius, 0, Math.PI * 2);
+      ctx.fill();
       ctx.strokeStyle = "#8d632f";
       ctx.lineWidth = 0.018;
       ctx.beginPath();
@@ -698,16 +809,20 @@ function draw(
           ? Math.max(0, 1 - (sim!.time - last) / 0.22) * 0.09
           : 0;
       const top = y + 0.35 - compression;
-      ctx.fillStyle = "#f9e2ce";
+      const housing = ctx.createLinearGradient(x - 0.2, y, x + 0.2, y);
+      housing.addColorStop(0, "#c9d4de");
+      housing.addColorStop(0.45, "#f8fbff");
+      housing.addColorStop(1, "#a5b6c7");
+      ctx.fillStyle = housing;
       ctx.fillRect(x - 0.16, y - 0.03, 0.32, 0.38);
-      ctx.strokeStyle = "#deb698";
+      ctx.strokeStyle = "#8eabb9";
       ctx.lineWidth = 0.015;
       ctx.strokeRect(x - 0.16, y - 0.03, 0.32, 0.38);
-      ctx.fillStyle = "#bc8060";
+      ctx.fillStyle = "#536b82";
       ctx.fillRect(x - 0.2, y - 0.06, 0.4, 0.12);
-      ctx.fillStyle = "#f2aa68";
+      ctx.fillStyle = "#e9a56a";
       ctx.fillRect(x - 0.2, top - 0.03, 0.4, 0.06);
-      ctx.strokeStyle = "#b8784f";
+      ctx.strokeStyle = "#5c738c";
       ctx.lineWidth = 0.027;
       ctx.beginPath();
       ctx.moveTo(x - 0.12, y + 0.06);
@@ -883,6 +998,14 @@ function draw(
     ctx.stroke();
   }
   ctx.restore();
+}
+function mixColor(a: string, b: string, amount: number) {
+  const channels = [1, 3, 5].map((offset) => {
+    const start = parseInt(a.slice(offset, offset + 2), 16);
+    const end = parseInt(b.slice(offset, offset + 2), 16);
+    return Math.round(start + (end - start) * amount);
+  });
+  return `rgb(${channels.join(",")})`;
 }
 function poly(ctx: CanvasRenderingContext2D, points: Vec[]) {
   ctx.beginPath();
